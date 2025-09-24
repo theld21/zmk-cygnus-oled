@@ -1,0 +1,81 @@
+name: Simple ZMK Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install west
+
+    - name: Initialize Zephyr
+      run: |
+        west init -l config
+        west update
+        west zephyr-export
+
+    - name: Install Zephyr dependencies
+      run: |
+        pip install -r zephyr/scripts/requirements.txt
+
+    - name: Build cygnus_central_dongle
+      run: |
+        west build -p auto -b nice_nano_v2 -d build/cygnus_central_dongle -s app -- -DZMK_CONFIG=$PWD/config -DSHIELD="cygnus_central_dongle dongle_display"
+
+    - name: Build cygnus_central_left
+      run: |
+        west build -p auto -b nice_nano_v2 -d build/cygnus_central_left -s app -- -DZMK_CONFIG=$PWD/config -DSHIELD=cygnus_central_left
+
+    - name: Build cygnus_peripheral_left
+      run: |
+        west build -p auto -b nice_nano_v2 -d build/cygnus_peripheral_left -s app -- -DZMK_CONFIG=$PWD/config -DSHIELD=cygnus_peripheral_left
+
+    - name: Build cygnus_peripheral_right
+      run: |
+        west build -p auto -b nice_nano_v2 -d build/cygnus_peripheral_right -s app -- -DZMK_CONFIG=$PWD/config -DSHIELD=cygnus_peripheral_right
+
+    - name: Build settings_reset
+      run: |
+        west build -p auto -b nice_nano_v2 -d build/settings_reset -s app -- -DZMK_CONFIG=$PWD/config -DSHIELD=settings_reset
+
+    - name: Build UF2 files
+      run: |
+        for dir in build/*/; do
+          if [ -d "$dir" ]; then
+            cd "$dir"
+            west build -t build_uf2
+            cd ../..
+          fi
+        done
+
+    - name: Upload all UF2 files
+      uses: actions/upload-artifact@v4
+      with:
+        name: zmk-cygnus-all-uf2
+        path: build/*/build/zephyr/*.uf2
+        retention-days: 30
+
+    - name: Upload all HEX files
+      uses: actions/upload-artifact@v4
+      with:
+        name: zmk-cygnus-all-hex
+        path: build/*/build/zephyr/*.hex
+        retention-days: 30

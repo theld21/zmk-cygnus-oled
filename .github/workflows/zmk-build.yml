@@ -1,0 +1,111 @@
+name: Build ZMK Firmware
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        include:
+          # cygnus configurations
+          - board: nice_nano_v2
+            shield: cygnus_central_dongle dongle_display
+            artifact-name: cygnus_central_dongle
+          - board: nice_nano_v2
+            shield: cygnus_central_left
+            artifact-name: cygnus_central_left
+          - board: nice_nano_v2
+            shield: cygnus_peripheral_left
+            artifact-name: cygnus_peripheral_left
+          - board: nice_nano_v2
+            shield: cygnus_peripheral_right
+            artifact-name: cygnus_peripheral_right
+          - board: nice_nano_v2
+            shield: settings_reset
+            artifact-name: settings_reset
+          - board: nice_nano_v2
+            shield: cygnus_central_dongle dongle_display
+            cmake-args: -DCONFIG_ZMK_USB_LOGGING=y
+            artifact-name: cygnus_central_dongle_with_logging
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install west
+
+    - name: Initialize Zephyr
+      run: |
+        west init -l config
+        west update
+        west zephyr-export
+
+    - name: Install Zephyr dependencies
+      run: |
+        pip install -r zephyr/scripts/requirements.txt
+
+    - name: Build
+      run: |
+        west build -p auto -b ${{ matrix.board }} -d build/${{ matrix.artifact-name }} -s app -- -DZMK_CONFIG=$PWD/config ${{ matrix.cmake-args }}
+
+    - name: Build UF2
+      run: |
+        cd build/${{ matrix.artifact-name }}
+        west build -t build_uf2
+
+    - name: Upload UF2
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact-name }}-uf2
+        path: build/${{ matrix.artifact-name }}/build/zephyr/*.uf2
+        retention-days: 30
+
+    - name: Upload HEX
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact-name }}-hex
+        path: build/${{ matrix.artifact-name }}/build/zephyr/*.hex
+        retention-days: 30
+
+  # Job để tạo release với tất cả artifacts
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+
+    - name: Create release archive
+      run: |
+        mkdir -p release
+        find ./artifacts -name "*.uf2" -exec cp {} ./release/ \;
+        find ./artifacts -name "*.hex" -exec cp {} ./release/ \;
+        cd release
+        zip -r ../zmk-cygnus-firmware.zip .
+        cd ..
+
+    - name: Upload release artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: zmk-cygnus-firmware-release
+        path: zmk-cygnus-firmware.zip
+        retention-days: 90
